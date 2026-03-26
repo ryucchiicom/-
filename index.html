@@ -470,7 +470,6 @@
       displayName: localStorage.getItem(myNameKey) || "",
       claimedNameKey: localStorage.getItem(myNameClaimKey) || "",
       roomId: "",
-      friendRoomCode: "",
       roomRef: null,
       currentRoom: null,
       queueRef: ref(db, "worldQueue/current"),
@@ -703,12 +702,11 @@
       }
 
       if (isFriendMode() && !state.currentRoom) {
-        const code = state.friendRoomCode || state.roomId || localStorage.getItem(lastRoomKey) || "";
-        els.roomInfo.textContent = code ? `部屋: ${code}` : "まだ部屋に入っていません";
-        els.status.textContent = code ? "相手を待ってるよ" : "参加してね";
+        els.roomInfo.textContent = "まだ部屋に入っていません";
+        els.status.textContent = "参加してね";
         els.playersInfo.textContent = "p1: - / p2: -";
         els.speedInfo.textContent = "落下速度: -";
-        els.hint.textContent = code ? "相手が来るのを待ってるよ" : "同じ部屋コードを2人で入れると対戦できます";
+        els.hint.textContent = "同じ部屋コードを2人で入れると対戦できます";
         setSettingsInputsEnabled(true);
         updateButtons();
         return;
@@ -876,7 +874,6 @@
       }
 
       state.roomId = "";
-      state.friendRoomCode = "";
       state.roomRef = null;
       state.currentRoom = null;
       state.mySlot = null;
@@ -913,7 +910,6 @@
       };
 
       state.roomId = "";
-      state.friendRoomCode = "";
       state.roomRef = null;
       state.mySlot = null;
       state.worldWaiting = false;
@@ -923,36 +919,34 @@
       updateButtons();
     }
 
-    async function maybeStartFriendGame(roomRef) {
+    async function startFriendIfReady(roomRef) {
       await runTransaction(roomRef, current => {
         if (!current) return current;
         const room = normalizeRoom(current);
 
-        if (room.status !== "playing" && room.players?.p1 && room.players?.p2) {
-          room.status = "playing";
-          room.currentPlayer = Math.random() < 0.5 ? "p1" : "p2";
-          room.board = boardToStorage(makeEmptyBoard(room.settings.rows, room.settings.cols));
-          room.totalDrops = 0;
-          room.gameOver = false;
-          room.winner = null;
-          room.lastMove = null;
-          room.winCells = null;
+        const p1 = room.players?.p1;
+        const p2 = room.players?.p2;
+
+        if (room.status !== "playing" && p1 && p2) {
+          const starter = Math.random() < 0.5 ? "p1" : "p2";
+          return {
+            ...current,
+            settings: room.settings,
+            board: boardToStorage(makeEmptyBoard(room.settings.rows, room.settings.cols)),
+            currentPlayer: starter,
+            status: "playing",
+            totalDrops: 0,
+            gameOver: false,
+            winner: null,
+            lastMove: null,
+            winCells: null,
+            players: room.players,
+            mode: "friend",
+            hostId: room.hostId
+          };
         }
 
-        return {
-          ...current,
-          settings: room.settings,
-          board: room.board,
-          currentPlayer: room.currentPlayer,
-          status: room.status,
-          totalDrops: room.totalDrops,
-          gameOver: room.gameOver,
-          winner: room.winner,
-          lastMove: room.lastMove,
-          winCells: room.winCells,
-          players: room.players,
-          hostId: room.hostId
-        };
+        return current;
       });
     }
 
@@ -1012,8 +1006,8 @@
         state.currentRoom = room;
         applySettingsToInputs(room.settings);
 
-        if (isFriendMode() && room.players?.p1 && room.players?.p2 && room.status !== "playing") {
-          maybeStartFriendGame(roomRef).catch(console.error);
+        if (isFriendMode() && room.status !== "playing" && room.players?.p1 && room.players?.p2) {
+          startFriendIfReady(roomRef).catch(console.error);
         }
 
         const mv = room.lastMove;
@@ -1057,8 +1051,6 @@
     async function joinFriendRoom() {
       const roomId = sanitizeRoomId(els.roomIdInput.value) || makeRandomRoomId();
       els.roomIdInput.value = roomId;
-
-      state.friendRoomCode = roomId;
       state.roomId = roomId;
       state.roomRef = ref(db, `rooms/${roomId}`);
 
@@ -1072,7 +1064,6 @@
       const slot = await claimFriendSlot(state.roomRef, state.displayName);
       if (!slot) {
         state.roomId = "";
-        state.friendRoomCode = "";
         state.roomRef = null;
         state.currentRoom = null;
         state.mySlot = null;
@@ -1082,7 +1073,8 @@
 
       state.mySlot = slot;
       await onDisconnect(ref(db, `rooms/${roomId}/players/${slot}`)).remove().catch(() => {});
-      await maybeStartFriendGame(state.roomRef);
+
+      await startFriendIfReady(state.roomRef);
       setupRoomListener(state.roomRef);
 
       localStorage.setItem(lastRoomKey, roomId);
@@ -1102,7 +1094,6 @@
 
       state.worldWaiting = false;
       state.roomId = "";
-      state.friendRoomCode = "";
       state.roomRef = null;
       state.mySlot = null;
       state.currentRoom = null;
@@ -1220,7 +1211,6 @@
       });
 
       state.roomId = roomId;
-      state.friendRoomCode = "";
       state.roomRef = roomRef;
       state.mySlot = pair.players.p1.uid === myId ? "p1" : "p2";
 
@@ -1457,11 +1447,9 @@
 
         if (isFriendMode()) {
           els.joinBtn.textContent = "参加中...";
-          const roomId = sanitizeRoomId(els.roomIdInput.value) || makeRandomRoomId();
-          state.friendRoomCode = roomId;
-          state.roomId = roomId;
-          localStorage.setItem(lastRoomKey, roomId);
-          els.roomIdInput.value = roomId;
+          state.roomId = sanitizeRoomId(els.roomIdInput.value) || makeRandomRoomId();
+          localStorage.setItem(lastRoomKey, state.roomId);
+          els.roomIdInput.value = state.roomId;
           await joinFriendRoom();
         } else if (isWorldMode()) {
           els.joinBtn.textContent = "マッチング中...";
@@ -1514,8 +1502,6 @@
       const settings = getSettingsFromInputs();
 
       if (isLocalMode()) {
-        renderBoard();
-        updateInfo();
         return;
       }
 
