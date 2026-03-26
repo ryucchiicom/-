@@ -482,7 +482,8 @@
       isAnimating: false,
       lastSeenMoveId: null,
       worldWaiting: false,
-      previewHideCell: null
+      previewHideCell: null,
+      joined: false
     };
 
     state.displayName = state.displayName || makeWeakName();
@@ -701,9 +702,9 @@
         return;
       }
 
-      if (isFriendMode() && !state.currentRoom) {
+      if (isFriendMode() && !state.joined) {
         els.roomInfo.textContent = "まだ部屋に入っていません";
-        els.status.textContent = "参加してね";
+        els.status.textContent = "部屋コードを入れて参加 / 作成を押してね";
         els.playersInfo.textContent = "p1: - / p2: -";
         els.speedInfo.textContent = "落下速度: -";
         els.hint.textContent = "同じ部屋コードを2人で入れると対戦できます";
@@ -717,7 +718,14 @@
       const p2 = state.currentRoom?.players?.p2?.name || "-";
       els.playersInfo.textContent = `p1: ${p1} / p2: ${p2}`;
 
-      if (!state.currentRoom) return;
+      if (!state.currentRoom) {
+        els.status.textContent = "部屋に接続中";
+        els.speedInfo.textContent = "落下速度: -";
+        els.hint.textContent = "接続中";
+        setSettingsInputsEnabled(roomSettingsEditable());
+        updateButtons();
+        return;
+      }
 
       if (state.currentRoom.status !== "playing") {
         els.status.textContent = isFriendMode() ? "相手を待ってるよ" : "マッチング待機中";
@@ -881,6 +889,7 @@
       state.worldWaiting = false;
       state.lastSeenMoveId = null;
       state.previewHideCell = null;
+      state.joined = false;
       clearGhost();
       renderBoard();
       updateInfo();
@@ -914,6 +923,7 @@
       state.mySlot = null;
       state.worldWaiting = false;
       state.lastSeenMoveId = null;
+      state.joined = true;
       renderBoard();
       updateInfo();
       updateButtons();
@@ -1067,13 +1077,14 @@
         state.roomRef = null;
         state.currentRoom = null;
         state.mySlot = null;
+        state.joined = false;
         els.status.textContent = "この部屋は満員です";
         return false;
       }
 
       state.mySlot = slot;
+      state.joined = true;
       await onDisconnect(ref(db, `rooms/${roomId}/players/${slot}`)).remove().catch(() => {});
-
       await startFriendIfReady(state.roomRef);
       setupRoomListener(state.roomRef);
 
@@ -1099,6 +1110,7 @@
       state.currentRoom = null;
       state.lastSeenMoveId = null;
       state.previewHideCell = null;
+      state.joined = true;
       clearGhost();
 
       if (state.queueUnsub) {
@@ -1213,6 +1225,7 @@
       state.roomId = roomId;
       state.roomRef = roomRef;
       state.mySlot = pair.players.p1.uid === myId ? "p1" : "p2";
+      state.joined = true;
 
       await onDisconnect(ref(db, `rooms/${roomId}/players/${state.mySlot}`)).remove().catch(() => {});
       setupRoomListener(roomRef);
@@ -1387,7 +1400,10 @@
         await playLocalMove(col);
         return;
       }
+      if (!state.joined) return;
       if (!state.currentRoom) return;
+      if (isFriendMode() && state.currentRoom.status !== "playing") return;
+      if (isWorldMode() && state.currentRoom.status !== "playing") return;
       await playOnlineMove(col);
     }
 
@@ -1450,7 +1466,8 @@
           state.roomId = sanitizeRoomId(els.roomIdInput.value) || makeRandomRoomId();
           localStorage.setItem(lastRoomKey, state.roomId);
           els.roomIdInput.value = state.roomId;
-          await joinFriendRoom();
+          const ok = await joinFriendRoom();
+          state.joined = ok;
         } else if (isWorldMode()) {
           els.joinBtn.textContent = "マッチング中...";
           await startWorldMatch();
