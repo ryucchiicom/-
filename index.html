@@ -702,11 +702,11 @@
       }
 
       if (isFriendMode() && !state.currentRoom) {
-        els.roomInfo.textContent = "まだ部屋に入っていません";
-        els.status.textContent = "参加してね";
+        els.roomInfo.textContent = state.roomId ? `部屋: ${state.roomId}` : "まだ部屋に入っていません";
+        els.status.textContent = state.roomId ? "相手を待ってるよ" : "参加してね";
         els.playersInfo.textContent = "p1: - / p2: -";
         els.speedInfo.textContent = "落下速度: -";
-        els.hint.textContent = "同じ部屋コードを2人で入れると対戦できます";
+        els.hint.textContent = state.roomId ? "相手が来るのを待ってるよ" : "同じ部屋コードを2人で入れると対戦できます";
         setSettingsInputsEnabled(true);
         updateButtons();
         return;
