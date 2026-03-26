@@ -1008,6 +1008,10 @@
         state.currentRoom = room;
         applySettingsToInputs(room.settings);
 
+        if (isFriendMode() && room.players?.p1 && room.players?.p2 && room.status !== "playing") {
+          maybeStartFriendGame(roomRef).catch(console.error);
+        }
+
         const mv = room.lastMove;
         if (!state.lastSeenMoveId && mv?.id) {
           state.lastSeenMoveId = mv.id;
