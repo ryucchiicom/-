@@ -88,13 +88,13 @@
     }
 
     #gameArea {
-      width: fit-content;
+      width: min(100%, 860px);
       max-width: 100%;
     }
 
     #boardScroll {
       position: relative;
-      width: fit-content;
+      width: 100%;
       max-width: 100%;
       overflow: auto;
       -webkit-overflow-scrolling: touch;
@@ -227,7 +227,6 @@
       </label>
       <button id="nameChangeBtn">名前変更</button>
       <button id="joinBtn">参加 / 作成</button>
-      <button id="applyBtn" class="hidden">設定を適応し開始</button>
     </div>
 
     <div class="row small">
@@ -299,7 +298,6 @@
       rows: document.getElementById("rows"),
       winCount: document.getElementById("winCount"),
       joinBtn: document.getElementById("joinBtn"),
-      applyBtn: document.getElementById("applyBtn"),
       roomInfo: document.getElementById("roomInfo"),
       status: document.getElementById("status"),
       speedInfo: document.getElementById("speed-info"),
@@ -505,27 +503,10 @@
     }
 
     function updateButtons() {
-      els.joinBtn.classList.toggle("hidden", isLocalMode());
-      els.applyBtn.classList.toggle("hidden", !isLocalMode() && !isFriendMode());
-
-      if (isLocalMode()) {
-        els.applyBtn.textContent = "設定を適応し開始";
-      } else if (isFriendMode()) {
-        els.joinBtn.textContent = "参加 / 作成";
-        els.applyBtn.textContent = "設定を適応し開始";
-      } else if (isWorldMode()) {
-        els.joinBtn.textContent = "マッチング開始";
-      }
-
-      if (isWorldMode()) {
-        els.applyBtn.classList.add("hidden");
-      }
-
-      els.applyBtn.disabled = isFriendMode()
-        ? !(state.roomRef && state.currentRoom && state.currentRoom.hostId === myId && !state.currentRoom.players?.p2)
-        : false;
-
       els.joinBtn.disabled = false;
+      els.joinBtn.textContent = isLocalMode()
+        ? "設定を適応し開始"
+        : (isWorldMode() ? "マッチング開始" : "参加 / 作成");
     }
 
     function updateModeUI() {
@@ -1036,7 +1017,12 @@
           return;
         }
 
-        const shouldAnimateRemote = mv?.id && mv.id !== state.lastSeenMoveId && mv.p !== myId && room.status === "playing" && !room.gameOver;
+        const shouldAnimateRemote =
+          mv?.id &&
+          mv.id !== state.lastSeenMoveId &&
+          mv.p !== myId &&
+          room.status === "playing" &&
+          !room.gameOver;
 
         if (shouldAnimateRemote) {
           state.previewHideCell = { r: mv.r, c: mv.c };
@@ -1075,6 +1061,10 @@
 
       const slot = await claimFriendSlot(state.roomRef, state.displayName);
       if (!slot) {
+        state.roomId = "";
+        state.roomRef = null;
+        state.currentRoom = null;
+        state.mySlot = null;
         els.status.textContent = "この部屋は満員です";
         return false;
       }
@@ -1398,42 +1388,43 @@
       await playOnlineMove(col);
     }
 
-    async function resetRoom() {
-      if (isWorldMode()) return;
-
-      if (isLocalMode()) {
-        await startLocalGame();
-        return;
-      }
-
-      if (!state.roomRef || state.currentRoom?.hostId !== myId) return;
-
-      const settings = getSettingsFromInputs();
-      const starter = Math.random() < 0.5 ? "p1" : "p2";
-
-      await update(state.roomRef, {
-        settings,
-        board: boardToStorage(makeEmptyBoard(settings.rows, settings.cols)),
-        currentPlayer: starter,
-        status: state.currentRoom?.players?.p2 ? "playing" : "waiting",
-        totalDrops: 0,
-        gameOver: false,
-        winner: null,
-        lastMove: null,
-        winCells: null
-      }).catch(() => {});
-    }
-
     async function rematchWorld() {
       if (!isWorldMode()) return;
       await cleanupSession({ clearQueue: true, releaseName: false });
       await startWorldMatch();
     }
 
-    async function handleStartButton() {
+    function currentModeFromUI() {
+      return [...els.modeRadios].find(r => r.checked)?.value || "friend";
+    }
+
+    async function switchMode(newMode) {
+      if (state.mode === newMode) return;
+
+      const releaseName = newMode === "local";
+      await cleanupSession({ clearQueue: true, releaseName });
+
+      state.mode = newMode;
+      localStorage.setItem(lastModeKey, newMode);
+
+      updateModeUI();
+      renderBoard();
+      updateInfo();
+      updateButtons();
+
+      if (newMode === "local") {
+        els.joinBtn.textContent = "設定を適応し開始";
+      } else if (newMode === "world") {
+        els.joinBtn.textContent = "マッチング開始";
+      } else {
+        els.joinBtn.textContent = "参加 / 作成";
+      }
+    }
+
+    async function handleJoinButton() {
       if (state.isJoining) return;
 
-      state.mode = [...els.modeRadios].find(r => r.checked)?.value || "friend";
+      state.mode = currentModeFromUI();
       localStorage.setItem(lastModeKey, state.mode);
       updateModeUI();
       renderBoard();
@@ -1449,6 +1440,7 @@
 
       try {
         await syncTypedName(false);
+        await ensureActiveName();
 
         if (isFriendMode()) {
           els.joinBtn.textContent = "参加中...";
@@ -1462,48 +1454,9 @@
         }
       } finally {
         state.isJoining = false;
-        els.joinBtn.disabled = false;
         updateButtons();
         updateInfo();
       }
-    }
-
-    async function applyButtonAction() {
-      if (isLocalMode()) {
-        await startLocalGame();
-        return;
-      }
-
-      if (isFriendMode()) {
-        if (!state.currentRoom || !state.roomRef) return;
-        const settings = getSettingsFromInputs();
-
-        if (state.currentRoom.hostId === myId && !state.currentRoom.players?.p2) {
-          await update(state.roomRef, {
-            settings,
-            board: boardToStorage(makeEmptyBoard(settings.rows, settings.cols)),
-            currentPlayer: Math.random() < 0.5 ? "p1" : "p2",
-            status: "waiting",
-            totalDrops: 0,
-            gameOver: false,
-            winner: null,
-            lastMove: null,
-            winCells: null
-          }).catch(() => {});
-        }
-
-        updateButtons();
-        updateInfo();
-      }
-    }
-
-    async function onModeChanged(newMode) {
-      state.mode = newMode;
-      localStorage.setItem(lastModeKey, newMode);
-      await cleanupSession({ clearQueue: true, releaseName: false });
-      updateModeUI();
-      renderBoard();
-      updateInfo();
     }
 
     async function updateRoomNameIfNeeded() {
@@ -1546,12 +1499,15 @@
       const settings = getSettingsFromInputs();
 
       if (isLocalMode()) {
+        renderBoard();
+        updateInfo();
         return;
       }
 
       if (isFriendMode()) {
         if (!state.roomRef) {
-          updateButtons();
+          renderBoard();
+          updateInfo();
           return;
         }
 
@@ -1569,7 +1525,7 @@
           }).catch(() => {});
         }
 
-        updateButtons();
+        updateModeUI();
         return;
       }
 
@@ -1583,19 +1539,18 @@
             expireAt: Date.now() + 120000
           }).catch(() => {});
         }
-        updateButtons();
+        updateModeUI();
       }
     }
 
     els.modeRadios.forEach(r => {
       r.checked = r.value === state.mode;
       r.addEventListener("change", () => {
-        if (r.checked) onModeChanged(r.value).catch(console.error);
+        if (r.checked) switchMode(r.value).catch(console.error);
       });
     });
 
-    els.joinBtn.addEventListener("click", () => handleStartButton().catch(console.error));
-    els.applyBtn.addEventListener("click", () => applyButtonAction().catch(console.error));
+    els.joinBtn.addEventListener("click", () => handleJoinButton().catch(console.error));
     els.rematchBtn.addEventListener("click", () => rematchWorld().catch(console.error));
     els.nameChangeBtn.addEventListener("click", () => updateRoomNameIfNeeded().catch(console.error));
 
@@ -1604,9 +1559,18 @@
       if (v) els.roomIdInput.value = v;
     });
 
-    els.rows.addEventListener("change", () => processSettingsChange().catch(console.error));
-    els.cols.addEventListener("change", () => processSettingsChange().catch(console.error));
-    els.winCount.addEventListener("change", () => processSettingsChange().catch(console.error));
+    els.rows.addEventListener("input", () => {
+      renderBoard();
+      processSettingsChange().catch(console.error);
+    });
+    els.cols.addEventListener("input", () => {
+      renderBoard();
+      processSettingsChange().catch(console.error);
+    });
+    els.winCount.addEventListener("input", () => {
+      renderBoard();
+      processSettingsChange().catch(console.error);
+    });
 
     window.addEventListener("beforeunload", () => {
       if (state.roomUnsub) state.roomUnsub();
@@ -1625,21 +1589,18 @@
       }
     });
 
-    async function bootstrap() {
-      await ensureActiveName().catch(() => {});
+    function bootstrap() {
+      if (!state.displayName) state.displayName = makeWeakName();
       els.nameInput.value = state.displayName;
       els.roomIdInput.value = localStorage.getItem(lastRoomKey) || makeRandomRoomId();
       applySettingsToInputs(getSettingsFromInputs());
       updateModeUI();
       renderBoard();
       updateInfo();
-
-      if (state.mode === "local") {
-        await startLocalGame();
-      }
+      updateButtons();
     }
 
-    bootstrap().catch(console.error);
+    bootstrap();
   </script>
 </body>
 </html>
