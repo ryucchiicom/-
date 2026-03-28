@@ -483,7 +483,7 @@
       lastSeenMoveId: null,
       worldWaiting: false,
       previewHideCell: null,
-      joined: false
+      friendConnected: false
     };
 
     state.displayName = state.displayName || makeWeakName();
@@ -702,7 +702,7 @@
         return;
       }
 
-      if (isFriendMode() && !state.joined) {
+      if (isFriendMode() && !state.friendConnected) {
         els.roomInfo.textContent = "まだ部屋に入っていません";
         els.status.textContent = "部屋コードを入れて参加 / 作成を押してね";
         els.playersInfo.textContent = "p1: - / p2: -";
@@ -889,7 +889,7 @@
       state.worldWaiting = false;
       state.lastSeenMoveId = null;
       state.previewHideCell = null;
-      state.joined = false;
+      state.friendConnected = false;
       clearGhost();
       renderBoard();
       updateInfo();
@@ -923,7 +923,7 @@
       state.mySlot = null;
       state.worldWaiting = false;
       state.lastSeenMoveId = null;
-      state.joined = true;
+      state.friendConnected = false;
       renderBoard();
       updateInfo();
       updateButtons();
@@ -992,10 +992,9 @@
       });
 
       if (!result?.committed) return null;
-
-      const players = result.snapshot?.val() || {};
-      if (players?.p1?.id === myId) return "p1";
-      if (players?.p2?.id === myId) return "p2";
+      const after = normalizeRoom(result.snapshot?.val() || {});
+      if (after.players?.p1?.id === myId) return "p1";
+      if (after.players?.p2?.id === myId) return "p2";
       return null;
     }
 
@@ -1078,13 +1077,14 @@
         state.roomRef = null;
         state.currentRoom = null;
         state.mySlot = null;
-        state.joined = false;
+        state.friendConnected = false;
         els.status.textContent = "この部屋は満員です";
         return false;
       }
 
       state.mySlot = slot;
-      state.joined = true;
+      state.friendConnected = true;
+
       await onDisconnect(ref(db, `rooms/${roomId}/players/${slot}`)).remove().catch(() => {});
       await startFriendIfReady(state.roomRef);
       setupRoomListener(state.roomRef);
@@ -1111,7 +1111,7 @@
       state.currentRoom = null;
       state.lastSeenMoveId = null;
       state.previewHideCell = null;
-      state.joined = true;
+      state.friendConnected = false;
       clearGhost();
 
       if (state.queueUnsub) {
@@ -1226,7 +1226,7 @@
       state.roomId = roomId;
       state.roomRef = roomRef;
       state.mySlot = pair.players.p1.uid === myId ? "p1" : "p2";
-      state.joined = true;
+      state.friendConnected = true;
 
       await onDisconnect(ref(db, `rooms/${roomId}/players/${state.mySlot}`)).remove().catch(() => {});
       setupRoomListener(roomRef);
@@ -1401,7 +1401,7 @@
         await playLocalMove(col);
         return;
       }
-      if (!state.joined) return;
+      if (!state.friendConnected && isFriendMode()) return;
       if (!state.currentRoom) return;
       if (isFriendMode() && state.currentRoom.status !== "playing") return;
       if (isWorldMode() && state.currentRoom.status !== "playing") return;
@@ -1467,8 +1467,9 @@
           state.roomId = sanitizeRoomId(els.roomIdInput.value) || makeRandomRoomId();
           localStorage.setItem(lastRoomKey, state.roomId);
           els.roomIdInput.value = state.roomId;
+
           const ok = await joinFriendRoom();
-          state.joined = ok;
+          state.friendConnected = ok;
         } else if (isWorldMode()) {
           els.joinBtn.textContent = "マッチング中...";
           await startWorldMatch();
