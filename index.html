@@ -22,8 +22,8 @@
       --button-bg: #e5e7eb;
       --button-text: #111827;
 
-      --bg-color: #34495e;
-      --grid-color: #2c3e50;
+      --bg-color: #dbe4ee;
+      --grid-color: #c7d2de;
       --p1-color: #e74c3c;
       --p2-color: #f1c40f;
       --win-bg: #c0392b;
@@ -31,14 +31,17 @@
 
     @media (prefers-color-scheme: dark) {
       :root {
-        --page-bg: #0f172a;
-        --surface-bg: #111827;
-        --surface-2: #1f2937;
-        --text-color: #e5e7eb;
-        --muted-color: #9ca3af;
-        --border-color: #374151;
-        --button-bg: #374151;
-        --button-text: #f9fafb;
+        --page-bg: #0b1120;
+        --surface-bg: #e5e7eb;
+        --surface-2: #f3f4f6;
+        --text-color: #0f172a;
+        --muted-color: #334155;
+        --border-color: #cbd5e1;
+        --button-bg: #f3f4f6;
+        --button-text: #111827;
+
+        --bg-color: #eef2f7;
+        --grid-color: #dbe4ee;
       }
     }
 
@@ -366,7 +369,7 @@
 
     function syncThemeColor() {
       const dark = window.matchMedia && window.matchMedia("(prefers-color-scheme: dark)").matches;
-      if (themeMeta) themeMeta.content = dark ? "#0f172a" : "#eef2f7";
+      if (themeMeta) themeMeta.content = dark ? "#0b1120" : "#eef2f7";
     }
 
     const themeMq = window.matchMedia ? window.matchMedia("(prefers-color-scheme: dark)") : null;
@@ -548,7 +551,8 @@
       lastSeenMoveId: null,
       worldWaiting: false,
       previewHideCell: null,
-      friendConnected: false
+      friendConnected: false,
+      heartbeatTimer: null
     };
 
     state.displayName = state.displayName || makeWeakName();
@@ -572,7 +576,7 @@
       els.joinBtn.disabled = false;
       els.joinBtn.textContent = isLocalMode()
         ? "設定を適応し開始"
-        : (isWorldMode() ? "マッチング開始" : "参加 / 作成");
+        : (isWorldMode() ? "マッチング開始" : (state.friendConnected ? "部屋に接続済み" : "参加 / 作成"));
     }
 
     function updateModeUI() {
@@ -921,6 +925,25 @@
       updateInfo();
     }
 
+    async function stopHeartbeat() {
+      if (state.heartbeatTimer) {
+        clearInterval(state.heartbeatTimer);
+        state.heartbeatTimer = null;
+      }
+    }
+
+    async function startHeartbeat() {
+      await stopHeartbeat();
+      state.heartbeatTimer = setInterval(() => {
+        if (!state.roomRef || !state.mySlot || !state.friendConnected) return;
+        update(ref(db, `rooms/${state.roomId}/players/${state.mySlot}`), {
+          id: myId,
+          name: state.displayName,
+          updatedAt: Date.now()
+        }).catch(() => {});
+      }, 15000);
+    }
+
     async function cleanupSession({ clearQueue = false, releaseName = false } = {}) {
       if (state.roomUnsub) {
         state.roomUnsub();
@@ -931,6 +954,8 @@
         state.queueUnsub();
         state.queueUnsub = null;
       }
+
+      await stopHeartbeat();
 
       if (state.roomId && state.mySlot) {
         await remove(ref(db, `rooms/${state.roomId}/players/${state.mySlot}`)).catch(() => {});
@@ -994,6 +1019,17 @@
       updateButtons();
     }
 
+    function prunePlayers(players, now) {
+      const out = {};
+      for (const k of ["p1", "p2"]) {
+        const p = players?.[k];
+        if (!p) continue;
+        const age = Number.isFinite(p.updatedAt) ? now - p.updatedAt : 0;
+        if (p.id === myId || age < 120000) out[k] = p;
+      }
+      return out;
+    }
+
     async function startFriendIfReady(roomRef) {
       await runTransaction(roomRef, current => {
         if (!current) return current;
@@ -1025,42 +1061,106 @@
       });
     }
 
-    async function claimFriendSlot(roomRef, chosenName) {
-      const playersRef = ref(db, `rooms/${state.roomId}/players`);
+    async function joinFriendRoom() {
+      const roomId = sanitizeRoomId(els.roomIdInput.value) || makeRandomRoomId();
+      els.roomIdInput.value = roomId;
+      state.roomId = roomId;
+      state.roomRef = ref(db, `rooms/${roomId}`);
 
-      const result = await runTransaction(playersRef, current => {
-        const players = current || {};
+      const settings = getSettingsFromInputs();
+      const now = Date.now();
 
-        if (players.p1?.id === myId) {
-          players.p1.name = chosenName;
-          players.p1.updatedAt = Date.now();
-          return players;
+      const result = await runTransaction(state.roomRef, current => {
+        let room = current ? normalizeRoom(current) : buildRoomState(settings.rows, settings.cols, settings.winTarget, "friend", myId, state.displayName);
+        room.players = prunePlayers(room.players, now);
+
+        if (!current) {
+          room.players.p1 = { id: myId, name: state.displayName, updatedAt: now };
+          room.hostId = myId;
+          return {
+            settings: room.settings,
+            board: room.board,
+            currentPlayer: room.currentPlayer,
+            status: room.status,
+            totalDrops: room.totalDrops,
+            gameOver: room.gameOver,
+            winner: room.winner,
+            lastMove: room.lastMove,
+            winCells: room.winCells,
+            players: room.players,
+            mode: "friend",
+            hostId: room.hostId
+          };
         }
 
-        if (players.p2?.id === myId) {
-          players.p2.name = chosenName;
-          players.p2.updatedAt = Date.now();
-          return players;
+        if (room.players.p1?.id === myId) {
+          room.players.p1 = { id: myId, name: state.displayName, updatedAt: now };
+        } else if (room.players.p2?.id === myId) {
+          room.players.p2 = { id: myId, name: state.displayName, updatedAt: now };
+        } else if (!room.players.p1) {
+          room.players.p1 = { id: myId, name: state.displayName, updatedAt: now };
+          room.hostId = room.hostId || myId;
+        } else if (!room.players.p2) {
+          room.players.p2 = { id: myId, name: state.displayName, updatedAt: now };
+        } else {
+          return;
         }
 
-        if (!players.p1) {
-          players.p1 = { id: myId, name: chosenName, updatedAt: Date.now() };
-          return players;
-        }
-
-        if (!players.p2) {
-          players.p2 = { id: myId, name: chosenName, updatedAt: Date.now() };
-          return players;
-        }
-
-        return;
+        return {
+          ...current,
+          settings: room.settings,
+          board: boardToStorage(room.board),
+          currentPlayer: room.currentPlayer,
+          status: room.status,
+          totalDrops: room.totalDrops,
+          gameOver: room.gameOver,
+          winner: room.winner,
+          lastMove: room.lastMove,
+          winCells: room.winCells,
+          players: room.players,
+          mode: "friend",
+          hostId: room.hostId
+        };
       });
 
-      if (!result?.committed) return null;
+      if (!result?.committed) {
+        state.roomId = "";
+        state.roomRef = null;
+        state.currentRoom = null;
+        state.mySlot = null;
+        state.friendConnected = false;
+        els.status.textContent = "この部屋は満員です";
+        return false;
+      }
+
       const after = normalizeRoom(result.snapshot?.val() || {});
-      if (after.players?.p1?.id === myId) return "p1";
-      if (after.players?.p2?.id === myId) return "p2";
-      return null;
+      state.mySlot = after.players?.p1?.id === myId ? "p1" : after.players?.p2?.id === myId ? "p2" : null;
+      state.friendConnected = !!state.mySlot;
+
+      if (!state.mySlot) {
+        state.roomId = "";
+        state.roomRef = null;
+        state.currentRoom = null;
+        state.friendConnected = false;
+        els.status.textContent = "この部屋は満員です";
+        return false;
+      }
+
+      await onDisconnect(ref(db, `rooms/${roomId}/players/${state.mySlot}`)).remove().catch(() => {});
+      await startHeartbeat();
+      setupRoomListener(state.roomRef);
+
+      localStorage.setItem(lastRoomKey, roomId);
+
+      const snap = await get(state.roomRef);
+      if (snap?.val()) {
+        const room = normalizeRoom(snap.val());
+        state.currentRoom = room;
+        applySettingsToInputs(room.settings);
+      }
+
+      await startFriendIfReady(state.roomRef);
+      return true;
     }
 
     function setupRoomListener(roomRef) {
@@ -1123,49 +1223,6 @@
       });
     }
 
-    async function joinFriendRoom() {
-      const roomId = sanitizeRoomId(els.roomIdInput.value) || makeRandomRoomId();
-      els.roomIdInput.value = roomId;
-      state.roomId = roomId;
-      state.roomRef = ref(db, `rooms/${roomId}`);
-
-      const settings = getSettingsFromInputs();
-
-      await runTransaction(state.roomRef, current => {
-        if (current) return current;
-        return buildRoomState(settings.rows, settings.cols, settings.winTarget, "friend", myId, state.displayName);
-      });
-
-      const slot = await claimFriendSlot(state.roomRef, state.displayName);
-      if (!slot) {
-        state.roomId = "";
-        state.roomRef = null;
-        state.currentRoom = null;
-        state.mySlot = null;
-        state.friendConnected = false;
-        els.status.textContent = "この部屋は満員です";
-        return false;
-      }
-
-      state.mySlot = slot;
-      state.friendConnected = true;
-
-      await onDisconnect(ref(db, `rooms/${roomId}/players/${slot}`)).remove().catch(() => {});
-      await startFriendIfReady(state.roomRef);
-      setupRoomListener(state.roomRef);
-
-      localStorage.setItem(lastRoomKey, roomId);
-
-      const snap = await get(state.roomRef);
-      if (snap?.val()) {
-        const room = normalizeRoom(snap.val());
-        state.currentRoom = room;
-        applySettingsToInputs(room.settings);
-      }
-
-      return true;
-    }
-
     async function startWorldMatch() {
       await ensureActiveName();
 
@@ -1178,6 +1235,7 @@
       state.previewHideCell = null;
       state.friendConnected = false;
       clearGhost();
+      await stopHeartbeat();
 
       if (state.queueUnsub) {
         state.queueUnsub();
@@ -1266,9 +1324,11 @@
       const roomId = pair.roomId;
       const roomRef = ref(db, `rooms/${roomId}`);
       const chosenSettings = pair.settings || getSettingsFromInputs();
+      const now = Date.now();
 
       await runTransaction(roomRef, current => {
         if (current) return current;
+
         return {
           settings: chosenSettings,
           board: boardToStorage(makeEmptyBoard(chosenSettings.rows, chosenSettings.cols)),
@@ -1280,8 +1340,8 @@
           lastMove: null,
           winCells: null,
           players: {
-            p1: { id: pair.players.p1.uid, name: pair.players.p1.name, updatedAt: Date.now() },
-            p2: { id: pair.players.p2.uid, name: pair.players.p2.name, updatedAt: Date.now() }
+            p1: { id: pair.players.p1.uid, name: pair.players.p1.name, updatedAt: now },
+            p2: { id: pair.players.p2.uid, name: pair.players.p2.name, updatedAt: now }
           },
           mode: "world",
           hostId: null
@@ -1294,6 +1354,7 @@
       state.friendConnected = true;
 
       await onDisconnect(ref(db, `rooms/${roomId}/players/${state.mySlot}`)).remove().catch(() => {});
+      await startHeartbeat();
       setupRoomListener(roomRef);
 
       const snap = await get(roomRef);
@@ -1660,6 +1721,7 @@
     window.addEventListener("beforeunload", () => {
       if (state.roomUnsub) state.roomUnsub();
       if (state.queueUnsub) state.queueUnsub();
+      if (state.heartbeatTimer) clearInterval(state.heartbeatTimer);
 
       if (isWorldMode() && state.worldWaiting && state.queueSnapshot?.status === "waiting" && state.queueSnapshot.uid === myId) {
         remove(state.queueRef).catch(() => {});
