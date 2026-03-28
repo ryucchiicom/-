@@ -702,24 +702,13 @@
         return;
       }
 
-      if (isFriendMode() && !state.roomRef) {
+      if (isFriendMode() && !state.joined) {
         els.roomInfo.textContent = "まだ部屋に入っていません";
         els.status.textContent = "部屋コードを入れて参加 / 作成を押してね";
         els.playersInfo.textContent = "p1: - / p2: -";
         els.speedInfo.textContent = "落下速度: -";
         els.hint.textContent = "同じ部屋コードを2人で入れると対戦できます";
         setSettingsInputsEnabled(true);
-        updateButtons();
-        return;
-      }
-
-      if (isFriendMode() && state.roomRef && !state.currentRoom) {
-        els.roomInfo.textContent = `部屋: ${state.roomId}`;
-        els.status.textContent = "部屋に接続中";
-        els.playersInfo.textContent = "p1: - / p2: -";
-        els.speedInfo.textContent = "落下速度: -";
-        els.hint.textContent = "接続中";
-        setSettingsInputsEnabled(roomSettingsEditable());
         updateButtons();
         return;
       }
@@ -1003,9 +992,10 @@
       });
 
       if (!result?.committed) return null;
-      const after = normalizeRoom(result.snapshot?.val() || {});
-      if (after.players?.p1?.id === myId) return "p1";
-      if (after.players?.p2?.id === myId) return "p2";
+
+      const players = result.snapshot?.val() || {};
+      if (players?.p1?.id === myId) return "p1";
+      if (players?.p2?.id === myId) return "p2";
       return null;
     }
 
@@ -1072,10 +1062,8 @@
     async function joinFriendRoom() {
       const roomId = sanitizeRoomId(els.roomIdInput.value) || makeRandomRoomId();
       els.roomIdInput.value = roomId;
-
       state.roomId = roomId;
       state.roomRef = ref(db, `rooms/${roomId}`);
-      state.joined = true;
 
       const settings = getSettingsFromInputs();
 
@@ -1096,6 +1084,7 @@
       }
 
       state.mySlot = slot;
+      state.joined = true;
       await onDisconnect(ref(db, `rooms/${roomId}/players/${slot}`)).remove().catch(() => {});
       await startFriendIfReady(state.roomRef);
       setupRoomListener(state.roomRef);
