@@ -1072,8 +1072,10 @@
     async function joinFriendRoom() {
       const roomId = sanitizeRoomId(els.roomIdInput.value) || makeRandomRoomId();
       els.roomIdInput.value = roomId;
+
       state.roomId = roomId;
       state.roomRef = ref(db, `rooms/${roomId}`);
+      state.joined = true;
 
       const settings = getSettingsFromInputs();
 
@@ -1094,7 +1096,6 @@
       }
 
       state.mySlot = slot;
-      state.joined = true;
       await onDisconnect(ref(db, `rooms/${roomId}/players/${slot}`)).remove().catch(() => {});
       await startFriendIfReady(state.roomRef);
       setupRoomListener(state.roomRef);
