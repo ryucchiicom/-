@@ -23,7 +23,7 @@
       --button-text: #111827;
 
       --bg-color: #34495e;
-      --grid-color: #c56a1f;
+      --grid-color: #ffcf9a;
 
       --p1-color: #e74c3c;
       --p2-color: #f1c40f;
@@ -42,7 +42,7 @@
         --button-text: #f9fafb;
 
         --bg-color: #f3f4f6;
-        --grid-color: #a85610;
+        --grid-color: #f0a43a;
       }
     }
 
@@ -402,10 +402,6 @@
       return encodeURIComponent(cleanName(name).normalize("NFKC").toLowerCase());
     }
 
-    function makeRandomRoomId() {
-      return "ROOM-" + Math.random().toString(36).slice(2, 8).toUpperCase();
-    }
-
     function sanitizeRoomId(text) {
       return (text || "")
         .trim()
@@ -599,7 +595,7 @@
       els.winCount.disabled = !editable;
 
       els.modeHint.textContent = isFriendMode()
-        ? "友達と: 同じ部屋コードで入ると対戦できます。"
+        ? "友達と: 入りたい部屋コードを入れて参加 / 作成を押してね。"
         : (isWorldMode()
           ? "世界の誰かと: マッチングするまで設定を変えられます。"
           : "1つの本体で: この端末だけで交互に遊べます。");
@@ -1028,7 +1024,9 @@
     }
 
     async function joinFriendRoom() {
-      const roomId = sanitizeRoomId(els.roomIdInput.value) || makeRandomRoomId();
+      const typedRoomId = sanitizeRoomId(els.roomIdInput.value);
+      const roomId = typedRoomId || makeRandomRoomId();
+
       els.roomIdInput.value = roomId;
       state.roomId = roomId;
       state.roomRef = ref(db, `rooms/${roomId}`);
@@ -1037,7 +1035,10 @@
       const now = Date.now();
 
       const tx = await runTransaction(state.roomRef, current => {
-        const room = current ? normalizeRoom(current) : buildRoomState(settings.rows, settings.cols, settings.winTarget, "friend", myId, state.displayName);
+        const room = current
+          ? normalizeRoom(current)
+          : buildRoomState(settings.rows, settings.cols, settings.winTarget, "friend", myId, state.displayName);
+
         const players = { ...(room.players || {}) };
 
         if (players.p1?.updatedAt && now - players.p1.updatedAt > 120000) delete players.p1;
@@ -1448,6 +1449,10 @@
       state.mode = newMode;
       localStorage.setItem(lastModeKey, newMode);
 
+      if (newMode === "friend") {
+        els.roomIdInput.value = "";
+      }
+
       updateModeUI();
       renderBoard();
       updateInfo();
@@ -1628,7 +1633,7 @@
     function bootstrap() {
       if (!state.displayName) state.displayName = makeWeakName();
       els.nameInput.value = state.displayName;
-      els.roomIdInput.value = localStorage.getItem(lastRoomKey) || makeRandomRoomId();
+      els.roomIdInput.value = "";
       applySettingsToInputs(getSettingsFromInputs());
       updateModeUI();
       renderBoard();
