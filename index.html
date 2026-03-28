@@ -3,17 +3,65 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <meta name="color-scheme" content="light dark">
   <title>重力四目並べ (Firebaseオンライン対戦版)</title>
   <style>
     :root {
+      color-scheme: light dark;
+
       --cell-size: 60px;
       --board-gap: 5px;
       --board-padding: 10px;
+
+      --page-bg: #ecf0f1;
+      --text-color: #1f2937;
+      --muted-color: #666666;
+
+      --panel-bg: #ffffff;
+      --panel-border: rgba(0, 0, 0, 0.06);
+      --shadow: 0 2px 5px rgba(0,0,0,0.10);
+
+      --input-bg: #ffffff;
+      --input-border: #cfd8e3;
+      --button-bg: #f3f4f6;
+      --button-text: #111827;
+      --button-border: #cfd8e3;
+      --button-hover: #e5e7eb;
+
       --bg-color: #34495e;
       --grid-color: #2c3e50;
       --p1-color: #e74c3c;
       --p2-color: #f1c40f;
       --win-bg: #c0392b;
+      --last-move: #ffffff;
+    }
+
+    @media (prefers-color-scheme: dark) {
+      :root {
+        --page-bg: #0f172a;
+        --text-color: #e5e7eb;
+        --muted-color: #9ca3af;
+
+        --panel-bg: #111827;
+        --panel-border: rgba(255, 255, 255, 0.08);
+        --shadow: 0 2px 8px rgba(0,0,0,0.35);
+
+        --input-bg: #0b1220;
+        --input-border: #334155;
+        --button-bg: #1f2937;
+        --button-text: #e5e7eb;
+        --button-border: #334155;
+        --button-hover: #334155;
+
+        --bg-color: #1f2937;
+        --grid-color: #111827;
+        --win-bg: #7f1d1d;
+        --last-move: #e5e7eb;
+      }
+    }
+
+    html {
+      color-scheme: light dark;
     }
 
     body {
@@ -21,7 +69,8 @@
       display: flex;
       flex-direction: column;
       align-items: center;
-      background: #ecf0f1;
+      background: var(--page-bg);
+      color: var(--text-color);
       padding: 20px;
       gap: 12px;
       margin: 0;
@@ -30,9 +79,11 @@
     .controls, .panel, #rematchPanel {
       width: min(100%, 860px);
       padding: 15px;
-      background: white;
+      background: var(--panel-bg);
+      color: var(--text-color);
+      border: 1px solid var(--panel-border);
       border-radius: 8px;
-      box-shadow: 0 2px 5px rgba(0,0,0,0.1);
+      box-shadow: var(--shadow);
       line-height: 2;
       box-sizing: border-box;
     }
@@ -53,6 +104,12 @@
     .controls input[type="text"] {
       width: 90px;
       margin-right: 10px;
+      background: var(--input-bg);
+      color: var(--text-color);
+      border: 1px solid var(--input-border);
+      border-radius: 6px;
+      padding: 4px 8px;
+      box-sizing: border-box;
     }
 
     .controls input#roomIdInput {
@@ -66,6 +123,14 @@
     button {
       cursor: pointer;
       padding: 8px 12px;
+      background: var(--button-bg);
+      color: var(--button-text);
+      border: 1px solid var(--button-border);
+      border-radius: 8px;
+    }
+
+    button:hover {
+      background: var(--button-hover);
     }
 
     .small {
@@ -79,7 +144,7 @@
     }
 
     .muted {
-      color: #666;
+      color: var(--muted-color);
       font-size: 0.95rem;
     }
 
@@ -153,6 +218,11 @@
 
     .cell.winner {
       background-color: var(--win-bg) !important;
+    }
+
+    .cell.last-move {
+      outline: 3px solid var(--last-move);
+      outline-offset: -3px;
     }
 
     #animationLayer {
