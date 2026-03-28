@@ -23,7 +23,7 @@
       --button-text: #111827;
 
       --bg-color: #34495e;
-      --grid-color: #f7f9fc;
+      --grid-color: #c56a1f;
 
       --p1-color: #e74c3c;
       --p2-color: #f1c40f;
@@ -42,7 +42,7 @@
         --button-text: #f9fafb;
 
         --bg-color: #f3f4f6;
-        --grid-color: #1f2937;
+        --grid-color: #a85610;
       }
     }
 
@@ -1038,7 +1038,6 @@
 
       const tx = await runTransaction(state.roomRef, current => {
         const room = current ? normalizeRoom(current) : buildRoomState(settings.rows, settings.cols, settings.winTarget, "friend", myId, state.displayName);
-
         const players = { ...(room.players || {}) };
 
         if (players.p1?.updatedAt && now - players.p1.updatedAt > 120000) delete players.p1;
@@ -1106,7 +1105,6 @@
       }
 
       setupRoomListener(state.roomRef);
-
       localStorage.setItem(lastRoomKey, roomId);
 
       if (after.players?.p1 && after.players?.p2) {
