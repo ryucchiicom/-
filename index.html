@@ -22,9 +22,8 @@
       --button-bg: #e5e7eb;
       --button-text: #111827;
 
-      --frame-bg: #dbe4ee;
-      --board-bg: #f8fafc;
-      --board-border: #cbd5e1;
+      --bg-color: #34495e;
+      --grid-color: #f7f9fc;
 
       --p1-color: #e74c3c;
       --p2-color: #f1c40f;
@@ -42,9 +41,8 @@
         --button-bg: #374151;
         --button-text: #f9fafb;
 
-        --frame-bg: #f4f7fb;
-        --board-bg: #1f2937;
-        --board-border: #e5e7eb;
+        --bg-color: #f3f4f6;
+        --grid-color: #1f2937;
       }
     }
 
@@ -146,15 +144,6 @@
       max-width: 100%;
     }
 
-    #boardFrame {
-      background: var(--frame-bg);
-      border: 1px solid var(--border-color);
-      border-radius: 18px;
-      padding: 12px;
-      box-sizing: border-box;
-      max-width: 100%;
-    }
-
     #boardScroll {
       position: relative;
       width: 100%;
@@ -173,9 +162,7 @@
     .board {
       display: grid;
       width: max-content;
-      background: var(--board-bg);
-      border: 1px solid var(--board-border);
-      box-shadow: 0 6px 18px rgba(0,0,0,0.12);
+      background: var(--bg-color);
       padding: var(--board-padding);
       border-radius: 10px;
       gap: var(--board-gap);
@@ -200,11 +187,6 @@
       transition: transform 0.12s ease, background-color 0.3s;
       position: relative;
       flex: none;
-    }
-
-    :root {
-      --grid-color: #2c3e50;
-      --bg-color: #34495e;
     }
 
     .cell:hover {
@@ -274,10 +256,6 @@
       .controls, .panel, #rematchPanel {
         padding: 12px;
       }
-
-      #boardFrame {
-        padding: 8px;
-      }
     }
   </style>
 </head>
@@ -327,12 +305,10 @@
   </div>
 
   <div id="gameArea">
-    <div id="boardFrame">
-      <div id="boardScroll">
-        <div id="boardStage">
-          <div id="board" class="board"></div>
-          <div id="animationLayer"></div>
-        </div>
+    <div id="boardScroll">
+      <div id="boardStage">
+        <div id="board" class="board"></div>
+        <div id="animationLayer"></div>
       </div>
     </div>
   </div>
@@ -397,8 +373,11 @@
     }
     const themeMq = window.matchMedia ? window.matchMedia("(prefers-color-scheme: dark)") : null;
     if (themeMq) {
-      if (typeof themeMq.addEventListener === "function") themeMq.addEventListener("change", syncThemeColor);
-      else if (typeof themeMq.addListener === "function") themeMq.addListener(syncThemeColor);
+      if (typeof themeMq.addEventListener === "function") {
+        themeMq.addEventListener("change", syncThemeColor);
+      } else if (typeof themeMq.addListener === "function") {
+        themeMq.addListener(syncThemeColor);
+      }
     }
     syncThemeColor();
 
@@ -428,7 +407,11 @@
     }
 
     function sanitizeRoomId(text) {
-      return (text || "").trim().toUpperCase().replace(/[^A-Z0-9_-]/g, "").slice(0, 20);
+      return (text || "")
+        .trim()
+        .toUpperCase()
+        .replace(/[^A-Z0-9_-]/g, "")
+        .slice(0, 20);
     }
 
     function getSettingsFromInputs() {
@@ -1044,169 +1027,95 @@
       });
     }
 
-    function setupRoomListener(roomRef) {
-      if (state.roomUnsub) state.roomUnsub();
-
-      state.roomUnsub = onValue(roomRef, snap => {
-        const raw = snap.val();
-        if (!raw) {
-          state.currentRoom = null;
-          state.lastSeenMoveId = null;
-          state.previewHideCell = null;
-          renderBoard();
-          updateInfo();
-          return;
-        }
-
-        const room = normalizeRoom(raw);
-        state.currentRoom = room;
-        applySettingsToInputs(room.settings);
-
-        if (isFriendMode() && room.status !== "playing" && room.players?.p1 && room.players?.p2) {
-          startFriendIfReady(roomRef).catch(console.error);
-        }
-
-        const mv = room.lastMove;
-        if (!state.lastSeenMoveId && mv?.id) {
-          state.lastSeenMoveId = mv.id;
-          state.previewHideCell = null;
-          renderBoard();
-          updateInfo();
-          return;
-        }
-
-        const shouldAnimateRemote =
-          mv?.id &&
-          mv.id !== state.lastSeenMoveId &&
-          mv.p !== myId &&
-          room.status === "playing" &&
-          !room.gameOver;
-
-        if (shouldAnimateRemote) {
-          state.previewHideCell = { r: mv.r, c: mv.c };
-          renderBoard();
-          updateInfo();
-
-          state.lastSeenMoveId = mv.id;
-          animateGhostMove(mv.c, mv.r, mv.p).then(() => {
-            state.previewHideCell = null;
-            renderBoard();
-            updateInfo();
-            clearGhost();
-          });
-          return;
-        }
-
-        if (mv?.id) state.lastSeenMoveId = mv.id;
-        state.previewHideCell = null;
-        renderBoard();
-        updateInfo();
-      });
-    }
-
     async function joinFriendRoom() {
       const roomId = sanitizeRoomId(els.roomIdInput.value) || makeRandomRoomId();
       els.roomIdInput.value = roomId;
       state.roomId = roomId;
       state.roomRef = ref(db, `rooms/${roomId}`);
-      state.friendConnected = true;
 
       const settings = getSettingsFromInputs();
+      const now = Date.now();
 
-      const joinResult = await runTransaction(state.roomRef, current => {
-        const now = Date.now();
-        const room = current ? normalizeRoom(current) : null;
+      const tx = await runTransaction(state.roomRef, current => {
+        const room = current ? normalizeRoom(current) : buildRoomState(settings.rows, settings.cols, settings.winTarget, "friend", myId, state.displayName);
 
-        if (!room) {
-          const newRoom = buildRoomState(settings.rows, settings.cols, settings.winTarget, "friend", myId, state.displayName);
-          newRoom.players = {
-            p1: { id: myId, name: state.displayName, updatedAt: now }
-          };
-          newRoom.hostId = myId;
-          return {
-            settings: newRoom.settings,
-            board: boardToStorage(newRoom.board),
-            currentPlayer: null,
-            status: "waiting",
-            totalDrops: 0,
-            gameOver: false,
-            winner: null,
-            lastMove: null,
-            winCells: null,
-            players: newRoom.players,
-            mode: "friend",
-            hostId: myId
-          };
-        }
+        const players = { ...(room.players || {}) };
 
-        if (!room.players) room.players = {};
+        if (players.p1?.updatedAt && now - players.p1.updatedAt > 120000) delete players.p1;
+        if (players.p2?.updatedAt && now - players.p2.updatedAt > 120000) delete players.p2;
 
-        if (room.players.p1?.id === myId) {
-          room.players.p1.name = state.displayName;
-          room.players.p1.updatedAt = now;
-        } else if (room.players.p2?.id === myId) {
-          room.players.p2.name = state.displayName;
-          room.players.p2.updatedAt = now;
-        } else if (!room.players.p1) {
-          room.players.p1 = { id: myId, name: state.displayName, updatedAt: now };
-          if (!room.hostId) room.hostId = myId;
-        } else if (!room.players.p2) {
-          room.players.p2 = { id: myId, name: state.displayName, updatedAt: now };
+        if (players.p1?.id === myId) {
+          players.p1 = { ...players.p1, name: state.displayName, updatedAt: now };
+        } else if (players.p2?.id === myId) {
+          players.p2 = { ...players.p2, name: state.displayName, updatedAt: now };
+        } else if (!players.p1) {
+          players.p1 = { id: myId, name: state.displayName, updatedAt: now };
+        } else if (!players.p2) {
+          players.p2 = { id: myId, name: state.displayName, updatedAt: now };
         } else {
           return;
         }
 
-        return {
-          settings: room.settings,
-          board: boardToStorage(room.board),
-          currentPlayer: room.currentPlayer,
-          status: room.status,
-          totalDrops: room.totalDrops,
-          gameOver: room.gameOver,
-          winner: room.winner,
-          lastMove: room.lastMove,
-          winCells: room.winCells,
-          players: room.players,
+        const next = {
+          settings: room.settings || settings,
+          board: boardToStorage(room.board || makeEmptyBoard(settings.rows, settings.cols)),
+          currentPlayer: room.currentPlayer || null,
+          status: room.status === "playing" ? "playing" : "waiting",
+          totalDrops: Number.isFinite(room.totalDrops) ? room.totalDrops : 0,
+          gameOver: !!room.gameOver,
+          winner: room.winner || null,
+          lastMove: room.lastMove || null,
+          winCells: Array.isArray(room.winCells) ? room.winCells : null,
+          players,
           mode: "friend",
-          hostId: room.hostId
+          hostId: room.hostId || myId
         };
+
+        if (next.status !== "playing" && next.players.p1 && next.players.p2) {
+          next.currentPlayer = Math.random() < 0.5 ? "p1" : "p2";
+          next.status = "playing";
+          next.board = boardToStorage(makeEmptyBoard(next.settings.rows, next.settings.cols));
+          next.totalDrops = 0;
+          next.gameOver = false;
+          next.winner = null;
+          next.lastMove = null;
+          next.winCells = null;
+        }
+
+        return next;
       });
 
-      if (!joinResult?.committed) {
-        state.friendConnected = false;
+      if (!tx?.committed) {
         state.roomId = "";
         state.roomRef = null;
         state.currentRoom = null;
         state.mySlot = null;
+        state.friendConnected = false;
         els.status.textContent = "この部屋は満員です";
         return false;
+      }
+
+      const after = normalizeRoom(tx.snapshot?.val() || {});
+      state.currentRoom = after;
+      state.friendConnected = true;
+      state.joined = true;
+      state.mySlot = after.players?.p1?.id === myId ? "p1" : after.players?.p2?.id === myId ? "p2" : null;
+
+      if (state.mySlot) {
+        await onDisconnect(ref(db, `rooms/${roomId}/players/${state.mySlot}`)).remove().catch(() => {});
+      }
+
+      setupRoomListener(state.roomRef);
+
+      localStorage.setItem(lastRoomKey, roomId);
+
+      if (after.players?.p1 && after.players?.p2) {
+        await startFriendIfReady(state.roomRef);
       }
 
       const snap = await get(state.roomRef);
       if (snap?.val()) {
         const room = normalizeRoom(snap.val());
-        state.currentRoom = room;
-        if (room.players?.p1?.id === myId) state.mySlot = "p1";
-        else if (room.players?.p2?.id === myId) state.mySlot = "p2";
-        else state.mySlot = null;
-
-        applySettingsToInputs(room.settings);
-      }
-
-      if (!state.mySlot) {
-        state.friendConnected = false;
-        return false;
-      }
-
-      await onDisconnect(ref(db, `rooms/${roomId}/players/${state.mySlot}`)).remove().catch(() => {});
-      setupRoomListener(state.roomRef);
-      localStorage.setItem(lastRoomKey, roomId);
-
-      state.friendConnected = true;
-
-      const afterSnap = await get(state.roomRef);
-      if (afterSnap?.val()) {
-        const room = normalizeRoom(afterSnap.val());
         state.currentRoom = room;
         applySettingsToInputs(room.settings);
       }
@@ -1340,6 +1249,7 @@
       state.roomRef = roomRef;
       state.mySlot = pair.players.p1.uid === myId ? "p1" : "p2";
       state.friendConnected = true;
+      state.joined = true;
 
       await onDisconnect(ref(db, `rooms/${roomId}/players/${state.mySlot}`)).remove().catch(() => {});
       setupRoomListener(roomRef);
@@ -1570,24 +1480,16 @@
 
       state.isJoining = true;
       els.joinBtn.disabled = true;
+      els.joinBtn.textContent = isFriendMode() ? "参加中..." : "マッチング中...";
 
       try {
         await syncTypedName(false);
         await ensureActiveName();
 
         if (isFriendMode()) {
-          els.joinBtn.textContent = "参加中...";
-          state.roomId = sanitizeRoomId(els.roomIdInput.value) || makeRandomRoomId();
-          localStorage.setItem(lastRoomKey, state.roomId);
-          els.roomIdInput.value = state.roomId;
-
-          state.friendConnected = true;
-          updateInfo();
-
           const ok = await joinFriendRoom();
           state.friendConnected = ok;
         } else if (isWorldMode()) {
-          els.joinBtn.textContent = "マッチング中...";
           await startWorldMatch();
         }
       } finally {
