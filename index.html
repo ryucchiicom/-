@@ -552,8 +552,7 @@
       lastSeenMoveId: null,
       worldWaiting: false,
       previewHideCell: null,
-      friendConnected: false,
-      joined: false
+      friendJoined: false
     };
 
     state.displayName = state.displayName || makeWeakName();
@@ -772,7 +771,7 @@
         return;
       }
 
-      if (isFriendMode() && !state.friendConnected) {
+      if (isFriendMode() && !state.friendJoined) {
         els.roomInfo.textContent = "まだ部屋に入っていません";
         els.status.textContent = "部屋コードを入れて参加 / 作成を押してね";
         els.playersInfo.textContent = "p1: - / p2: -";
@@ -798,7 +797,11 @@
       }
 
       if (state.currentRoom.status !== "playing") {
-        els.status.textContent = isFriendMode() ? "相手を待ってるよ" : "マッチング待機中";
+        if (isFriendMode()) {
+          els.status.textContent = "相手を待ってるよ";
+        } else {
+          els.status.textContent = "マッチング待機中";
+        }
       } else if (state.currentRoom.gameOver) {
         if (state.currentRoom.winner === "draw") {
           els.status.textContent = "引き分けです！";
@@ -959,8 +962,7 @@
       state.worldWaiting = false;
       state.lastSeenMoveId = null;
       state.previewHideCell = null;
-      state.friendConnected = false;
-      state.joined = false;
+      state.friendJoined = false;
       clearGhost();
       renderBoard();
       updateInfo();
@@ -994,8 +996,7 @@
       state.mySlot = null;
       state.worldWaiting = false;
       state.lastSeenMoveId = null;
-      state.friendConnected = false;
-      state.joined = true;
+      state.friendJoined = false;
       renderBoard();
       updateInfo();
       updateButtons();
@@ -1032,6 +1033,66 @@
       });
     }
 
+    function setupFriendListener(roomRef) {
+      if (state.roomUnsub) state.roomUnsub();
+
+      state.roomUnsub = onValue(roomRef, snap => {
+        const raw = snap.val();
+        if (!raw) {
+          state.currentRoom = null;
+          state.lastSeenMoveId = null;
+          state.previewHideCell = null;
+          renderBoard();
+          updateInfo();
+          return;
+        }
+
+        const room = normalizeRoom(raw);
+        state.currentRoom = room;
+        applySettingsToInputs(room.settings);
+
+        if (room.players?.p1 && room.players?.p2 && room.status !== "playing") {
+          startFriendIfReady(roomRef).catch(console.error);
+        }
+
+        const mv = room.lastMove;
+        if (!state.lastSeenMoveId && mv?.id) {
+          state.lastSeenMoveId = mv.id;
+          state.previewHideCell = null;
+          renderBoard();
+          updateInfo();
+          return;
+        }
+
+        const shouldAnimateRemote =
+          mv?.id &&
+          mv.id !== state.lastSeenMoveId &&
+          mv.p !== myId &&
+          room.status === "playing" &&
+          !room.gameOver;
+
+        if (shouldAnimateRemote) {
+          state.previewHideCell = { r: mv.r, c: mv.c };
+          renderBoard();
+          updateInfo();
+
+          state.lastSeenMoveId = mv.id;
+          animateGhostMove(mv.c, mv.r, mv.p).then(() => {
+            state.previewHideCell = null;
+            renderBoard();
+            updateInfo();
+            clearGhost();
+          });
+          return;
+        }
+
+        if (mv?.id) state.lastSeenMoveId = mv.id;
+        state.previewHideCell = null;
+        renderBoard();
+        updateInfo();
+      });
+    }
+
     async function joinFriendRoom() {
       const roomId = sanitizeRoomId(els.roomIdInput.value) || makeRandomRoomId();
       els.roomIdInput.value = roomId;
@@ -1041,25 +1102,10 @@
       const settings = getSettingsFromInputs();
       const now = Date.now();
 
-      const tx = await runTransaction(state.roomRef, current => {
-        const room = current ? normalizeRoom(current) : buildRoomState(settings.rows, settings.cols, settings.winTarget, "friend", myId, state.displayName);
-
-        const players = { ...(room.players || {}) };
-
-        if (players.p1?.updatedAt && now - players.p1.updatedAt > 120000) delete players.p1;
-        if (players.p2?.updatedAt && now - players.p2.updatedAt > 120000) delete players.p2;
-
-        if (players.p1?.id === myId) {
-          players.p1 = { ...players.p1, name: state.displayName, updatedAt: now };
-        } else if (players.p2?.id === myId) {
-          players.p2 = { ...players.p2, name: state.displayName, updatedAt: now };
-        } else if (!players.p1) {
-          players.p1 = { id: myId, name: state.displayName, updatedAt: now };
-        } else if (!players.p2) {
-          players.p2 = { id: myId, name: state.displayName, updatedAt: now };
-        } else {
-          return;
-        }
+      const roomTx = await runTransaction(state.roomRef, current => {
+        const room = current
+          ? normalizeRoom(current)
+          : buildRoomState(settings.rows, settings.cols, settings.winTarget, "friend", myId, state.displayName);
 
         const next = {
           settings: room.settings || settings,
@@ -1071,52 +1117,81 @@
           winner: room.winner || null,
           lastMove: room.lastMove || null,
           winCells: Array.isArray(room.winCells) ? room.winCells : null,
-          players,
+          players: room.players || {},
           mode: "friend",
           hostId: room.hostId || myId
         };
 
-        if (next.status !== "playing" && next.players.p1 && next.players.p2) {
-          next.currentPlayer = Math.random() < 0.5 ? "p1" : "p2";
-          next.status = "playing";
-          next.board = boardToStorage(makeEmptyBoard(next.settings.rows, next.settings.cols));
-          next.totalDrops = 0;
-          next.gameOver = false;
-          next.winner = null;
-          next.lastMove = null;
-          next.winCells = null;
+        if (!current) {
+          next.players = { p1: { id: myId, name: state.displayName, updatedAt: now } };
+          next.hostId = myId;
         }
 
         return next;
       });
 
-      if (!tx?.committed) {
+      if (!roomTx?.committed) {
         state.roomId = "";
         state.roomRef = null;
         state.currentRoom = null;
         state.mySlot = null;
-        state.friendConnected = false;
+        state.friendJoined = false;
+        els.status.textContent = "部屋の作成に失敗したよ";
+        return false;
+      }
+
+      const playersRef = ref(db, `rooms/${roomId}/players`);
+      const claimTx = await runTransaction(playersRef, current => {
+        const players = current || {};
+
+        if (players.p1?.id === myId) {
+          players.p1.name = state.displayName;
+          players.p1.updatedAt = now;
+          return players;
+        }
+
+        if (players.p2?.id === myId) {
+          players.p2.name = state.displayName;
+          players.p2.updatedAt = now;
+          return players;
+        }
+
+        if (!players.p1) {
+          players.p1 = { id: myId, name: state.displayName, updatedAt: now };
+          return players;
+        }
+
+        if (!players.p2) {
+          players.p2 = { id: myId, name: state.displayName, updatedAt: now };
+          return players;
+        }
+
+        return;
+      });
+
+      if (!claimTx?.committed) {
+        state.roomId = "";
+        state.roomRef = null;
+        state.currentRoom = null;
+        state.mySlot = null;
+        state.friendJoined = false;
         els.status.textContent = "この部屋は満員です";
         return false;
       }
 
-      const after = normalizeRoom(tx.snapshot?.val() || {});
-      state.currentRoom = after;
-      state.friendConnected = true;
-      state.joined = true;
-      state.mySlot = after.players?.p1?.id === myId ? "p1" : after.players?.p2?.id === myId ? "p2" : null;
+      const afterPlayers = claimTx.snapshot?.val() || {};
+      state.mySlot = afterPlayers.p1?.id === myId ? "p1" : afterPlayers.p2?.id === myId ? "p2" : null;
+      state.friendJoined = true;
 
       if (state.mySlot) {
         await onDisconnect(ref(db, `rooms/${roomId}/players/${state.mySlot}`)).remove().catch(() => {});
       }
 
-      setupRoomListener(state.roomRef);
+      setupFriendListener(state.roomRef);
 
       localStorage.setItem(lastRoomKey, roomId);
 
-      if (after.players?.p1 && after.players?.p2) {
-        await startFriendIfReady(state.roomRef);
-      }
+      await startFriendIfReady(state.roomRef);
 
       const snap = await get(state.roomRef);
       if (snap?.val()) {
@@ -1138,7 +1213,7 @@
       state.currentRoom = null;
       state.lastSeenMoveId = null;
       state.previewHideCell = null;
-      state.friendConnected = false;
+      state.friendJoined = false;
       clearGhost();
 
       if (state.queueUnsub) {
@@ -1253,11 +1328,10 @@
       state.roomId = roomId;
       state.roomRef = roomRef;
       state.mySlot = pair.players.p1.uid === myId ? "p1" : "p2";
-      state.friendConnected = true;
-      state.joined = true;
+      state.friendJoined = true;
 
       await onDisconnect(ref(db, `rooms/${roomId}/players/${state.mySlot}`)).remove().catch(() => {});
-      setupRoomListener(roomRef);
+      setupFriendListener(roomRef);
 
       const snap = await get(roomRef);
       if (snap?.val()) {
@@ -1429,7 +1503,7 @@
         await playLocalMove(col);
         return;
       }
-      if (!state.friendConnected && isFriendMode()) return;
+      if (isFriendMode() && !state.friendJoined) return;
       if (!state.currentRoom) return;
       if (isFriendMode() && state.currentRoom.status !== "playing") return;
       if (isWorldMode() && state.currentRoom.status !== "playing") return;
@@ -1493,7 +1567,7 @@
 
         if (isFriendMode()) {
           const ok = await joinFriendRoom();
-          state.friendConnected = ok;
+          state.friendJoined = ok;
         } else if (isWorldMode()) {
           await startWorldMatch();
         }
