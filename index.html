@@ -23,7 +23,8 @@
       --button-text: #111827;
 
       --bg-color: #34495e;
-      --grid-color: #f2d2b6;
+      --grid-color: #f2d1b3;
+      --skin-color: #f2d1b3;
 
       --p1-color: #e74c3c;
       --p2-color: #f1c40f;
@@ -41,8 +42,9 @@
         --button-bg: #374151;
         --button-text: #f9fafb;
 
-        --bg-color: #f3f4f6;
-        --grid-color: #e7c6aa;
+        --bg-color: #f2d1b3;
+        --grid-color: #1f2937;
+        --skin-color: #f2d1b3;
       }
     }
 
@@ -488,6 +490,23 @@
       return matrix;
     }
 
+    function buildRoomState(r, c, winTarget, mode, hostId, hostName) {
+      return {
+        settings: { rows: r, cols: c, winTarget },
+        board: boardToStorage(makeEmptyBoard(r, c)),
+        currentPlayer: null,
+        status: "waiting",
+        totalDrops: 0,
+        gameOver: false,
+        winner: null,
+        lastMove: null,
+        winCells: null,
+        players: hostId ? { p1: { id: hostId, name: hostName, updatedAt: Date.now() } } : {},
+        mode: mode || "friend",
+        hostId: hostId || null
+      };
+    }
+
     function normalizeRoom(raw) {
       const s = raw || {};
       const setts = s.settings || {};
@@ -533,7 +552,8 @@
       lastSeenMoveId: null,
       worldWaiting: false,
       previewHideCell: null,
-      friendConnected: false
+      friendConnected: false,
+      joined: false
     };
 
     state.displayName = state.displayName || makeWeakName();
@@ -940,6 +960,7 @@
       state.lastSeenMoveId = null;
       state.previewHideCell = null;
       state.friendConnected = false;
+      state.joined = false;
       clearGhost();
       renderBoard();
       updateInfo();
@@ -974,6 +995,7 @@
       state.worldWaiting = false;
       state.lastSeenMoveId = null;
       state.friendConnected = false;
+      state.joined = true;
       renderBoard();
       updateInfo();
       updateButtons();
@@ -1020,24 +1042,12 @@
       const now = Date.now();
 
       const tx = await runTransaction(state.roomRef, current => {
-        const room = current
-          ? normalizeRoom(current)
-          : {
-              settings,
-              board: makeEmptyBoard(settings.rows, settings.cols),
-              currentPlayer: null,
-              status: "waiting",
-              totalDrops: 0,
-              gameOver: false,
-              winner: null,
-              lastMove: null,
-              winCells: null,
-              players: {},
-              mode: "friend",
-              hostId: myId
-            };
+        const room = current ? normalizeRoom(current) : buildRoomState(settings.rows, settings.cols, settings.winTarget, "friend", myId, state.displayName);
 
         const players = { ...(room.players || {}) };
+
+        if (players.p1?.updatedAt && now - players.p1.updatedAt > 120000) delete players.p1;
+        if (players.p2?.updatedAt && now - players.p2.updatedAt > 120000) delete players.p2;
 
         if (players.p1?.id === myId) {
           players.p1 = { ...players.p1, name: state.displayName, updatedAt: now };
@@ -1063,7 +1073,7 @@
           winCells: Array.isArray(room.winCells) ? room.winCells : null,
           players,
           mode: "friend",
-          hostId: room.hostId || players.p1?.id || myId
+          hostId: room.hostId || myId
         };
 
         if (next.status !== "playing" && next.players.p1 && next.players.p2) {
@@ -1093,6 +1103,7 @@
       const after = normalizeRoom(tx.snapshot?.val() || {});
       state.currentRoom = after;
       state.friendConnected = true;
+      state.joined = true;
       state.mySlot = after.players?.p1?.id === myId ? "p1" : after.players?.p2?.id === myId ? "p2" : null;
 
       if (state.mySlot) {
@@ -1243,6 +1254,7 @@
       state.roomRef = roomRef;
       state.mySlot = pair.players.p1.uid === myId ? "p1" : "p2";
       state.friendConnected = true;
+      state.joined = true;
 
       await onDisconnect(ref(db, `rooms/${roomId}/players/${state.mySlot}`)).remove().catch(() => {});
       setupRoomListener(roomRef);
