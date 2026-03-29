@@ -23,7 +23,7 @@
       --button-text: #111827;
 
       --bg-color: #34495e;
-      --grid-color: #ffcf9a;
+      --grid-color: #f2d2b6;
 
       --p1-color: #e74c3c;
       --p2-color: #f1c40f;
@@ -42,7 +42,7 @@
         --button-text: #f9fafb;
 
         --bg-color: #f3f4f6;
-        --grid-color: #f0a43a;
+        --grid-color: #e7c6aa;
       }
     }
 
@@ -402,6 +402,10 @@
       return encodeURIComponent(cleanName(name).normalize("NFKC").toLowerCase());
     }
 
+    function makeRandomRoomId() {
+      return "ROOM-" + Math.random().toString(36).slice(2, 8).toUpperCase();
+    }
+
     function sanitizeRoomId(text) {
       return (text || "")
         .trim()
@@ -482,23 +486,6 @@
       }
 
       return matrix;
-    }
-
-    function buildRoomState(r, c, winTarget, mode, hostId, hostName) {
-      return {
-        settings: { rows: r, cols: c, winTarget },
-        board: boardToStorage(makeEmptyBoard(r, c)),
-        currentPlayer: null,
-        status: "waiting",
-        totalDrops: 0,
-        gameOver: false,
-        winner: null,
-        lastMove: null,
-        winCells: null,
-        players: hostId ? { p1: { id: hostId, name: hostName, updatedAt: Date.now() } } : {},
-        mode: mode || "friend",
-        hostId: hostId || null
-      };
     }
 
     function normalizeRoom(raw) {
@@ -595,7 +582,7 @@
       els.winCount.disabled = !editable;
 
       els.modeHint.textContent = isFriendMode()
-        ? "友達と: 入りたい部屋コードを入れて参加 / 作成を押してね。"
+        ? "友達と: 同じ部屋コードで入ると対戦できます。"
         : (isWorldMode()
           ? "世界の誰かと: マッチングするまで設定を変えられます。"
           : "1つの本体で: この端末だけで交互に遊べます。");
@@ -1024,9 +1011,7 @@
     }
 
     async function joinFriendRoom() {
-      const typedRoomId = sanitizeRoomId(els.roomIdInput.value);
-      const roomId = typedRoomId || makeRandomRoomId();
-
+      const roomId = sanitizeRoomId(els.roomIdInput.value) || makeRandomRoomId();
       els.roomIdInput.value = roomId;
       state.roomId = roomId;
       state.roomRef = ref(db, `rooms/${roomId}`);
@@ -1037,12 +1022,22 @@
       const tx = await runTransaction(state.roomRef, current => {
         const room = current
           ? normalizeRoom(current)
-          : buildRoomState(settings.rows, settings.cols, settings.winTarget, "friend", myId, state.displayName);
+          : {
+              settings,
+              board: makeEmptyBoard(settings.rows, settings.cols),
+              currentPlayer: null,
+              status: "waiting",
+              totalDrops: 0,
+              gameOver: false,
+              winner: null,
+              lastMove: null,
+              winCells: null,
+              players: {},
+              mode: "friend",
+              hostId: myId
+            };
 
         const players = { ...(room.players || {}) };
-
-        if (players.p1?.updatedAt && now - players.p1.updatedAt > 120000) delete players.p1;
-        if (players.p2?.updatedAt && now - players.p2.updatedAt > 120000) delete players.p2;
 
         if (players.p1?.id === myId) {
           players.p1 = { ...players.p1, name: state.displayName, updatedAt: now };
@@ -1068,7 +1063,7 @@
           winCells: Array.isArray(room.winCells) ? room.winCells : null,
           players,
           mode: "friend",
-          hostId: room.hostId || myId
+          hostId: room.hostId || players.p1?.id || myId
         };
 
         if (next.status !== "playing" && next.players.p1 && next.players.p2) {
@@ -1098,7 +1093,6 @@
       const after = normalizeRoom(tx.snapshot?.val() || {});
       state.currentRoom = after;
       state.friendConnected = true;
-      state.joined = true;
       state.mySlot = after.players?.p1?.id === myId ? "p1" : after.players?.p2?.id === myId ? "p2" : null;
 
       if (state.mySlot) {
@@ -1106,6 +1100,7 @@
       }
 
       setupRoomListener(state.roomRef);
+
       localStorage.setItem(lastRoomKey, roomId);
 
       if (after.players?.p1 && after.players?.p2) {
@@ -1248,7 +1243,6 @@
       state.roomRef = roomRef;
       state.mySlot = pair.players.p1.uid === myId ? "p1" : "p2";
       state.friendConnected = true;
-      state.joined = true;
 
       await onDisconnect(ref(db, `rooms/${roomId}/players/${state.mySlot}`)).remove().catch(() => {});
       setupRoomListener(roomRef);
@@ -1449,10 +1443,6 @@
       state.mode = newMode;
       localStorage.setItem(lastModeKey, newMode);
 
-      if (newMode === "friend") {
-        els.roomIdInput.value = "";
-      }
-
       updateModeUI();
       renderBoard();
       updateInfo();
@@ -1633,7 +1623,7 @@
     function bootstrap() {
       if (!state.displayName) state.displayName = makeWeakName();
       els.nameInput.value = state.displayName;
-      els.roomIdInput.value = "";
+      els.roomIdInput.value = localStorage.getItem(lastRoomKey) || makeRandomRoomId();
       applySettingsToInputs(getSettingsFromInputs());
       updateModeUI();
       renderBoard();
