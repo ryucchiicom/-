@@ -439,18 +439,6 @@
       return src.map(row => row.slice());
     }
 
-    function countPlacedCells(board) {
-      if (!Array.isArray(board)) return 0;
-      let n = 0;
-      for (const row of board) {
-        if (!Array.isArray(row)) continue;
-        for (const cell of row) {
-          if (cell !== null && cell !== undefined) n++;
-        }
-      }
-      return n;
-    }
-
     function boardToStorage(matrix) {
       const out = {};
       for (let r = 0; r < matrix.length; r++) {
@@ -546,6 +534,16 @@
       return `W-${Date.now().toString(36).toUpperCase()}-${Math.random().toString(36).slice(2, 6).toUpperCase()}`;
     }
 
+    function countPieces(board) {
+      let n = 0;
+      for (const row of board || []) {
+        for (const cell of row || []) {
+          if (cell) n++;
+        }
+      }
+      return n;
+    }
+
     const state = {
       mode: localStorage.getItem(lastModeKey) || "friend",
       displayName: localStorage.getItem(myNameKey) || "",
@@ -581,7 +579,9 @@
         if (!state.currentRoom) return true;
         return state.currentRoom.hostId === myId && !state.currentRoom.players?.p2;
       }
-      if (isWorldMode()) return !state.currentRoom || state.currentRoom.gameOver;
+      if (isWorldMode()) {
+        return !state.currentRoom || !!state.currentRoom.gameOver;
+      }
       return false;
     }
 
@@ -636,10 +636,6 @@
         const icon = state.currentRoom.winner === "p1" ? "◯" : "✕";
         els.rematchText.textContent = `${icon}の勝ち！ 新しいゲームを開始しますか？`;
       }
-
-      els.rows.disabled = false;
-      els.cols.disabled = false;
-      els.winCount.disabled = false;
     }
 
     function getCellMetrics() {
@@ -700,7 +696,7 @@
       ghost.style.top = `${padding - cellSize - 2}px`;
       els.animationLayer.appendChild(ghost);
 
-      const drops = countPlacedCells(state.currentRoom?.board || []);
+      const drops = countPieces(state.currentRoom?.board);
       const stepDelay = Math.max(60, Math.floor(1000 / (5 + drops)));
 
       for (let r = 0; r <= targetRow; r++) {
@@ -709,13 +705,6 @@
       }
 
       return ghost;
-    }
-
-    function getPlayerNames(room) {
-      return {
-        p1: room?.players?.p1?.name || "-",
-        p2: room?.players?.p2?.name || "-"
-      };
     }
 
     function renderBoard() {
@@ -749,7 +738,19 @@
       els.winCount.disabled = !enabled;
     }
 
+    function getPlayerNames() {
+      const roomPlayers = state.currentRoom?.players || {};
+      const queuePlayers = state.queueSnapshot?.players || {};
+      return {
+        p1: roomPlayers.p1?.name || queuePlayers.p1?.name || "-",
+        p2: roomPlayers.p2?.name || queuePlayers.p2?.name || "-"
+      };
+    }
+
     function updateInfo() {
+      const moves = countPieces(state.currentRoom?.board);
+      const names = getPlayerNames();
+
       if (isLocalMode()) {
         els.roomInfo.textContent = "1つの本体で対戦中";
         const p1 = state.currentRoom?.players?.p1?.name || state.displayName;
@@ -767,13 +768,11 @@
             const wIcon = state.currentRoom.winner === "p1" ? "◯" : "✕";
             els.status.textContent = `${wIcon}の勝ち！ (${state.currentRoom.settings.winTarget}目揃いました)`;
           }
-          const drops = countPlacedCells(state.currentRoom.board);
-          els.speedInfo.textContent = `現在の落下速度: 1/${5 + drops} 秒 (n=${drops})`;
+          els.speedInfo.textContent = `現在の落下速度: 1/${5 + moves} 秒 (n=${moves})`;
         } else {
           const turnIcon = state.currentRoom.currentPlayer === "p1" ? "◯" : "✕";
           els.status.textContent = `${turnIcon}の番です`;
-          const drops = countPlacedCells(state.currentRoom.board);
-          els.speedInfo.textContent = `現在の落下速度: 1/${5 + drops} 秒 (n=${drops})`;
+          els.speedInfo.textContent = `現在の落下速度: 1/${5 + moves} 秒 (n=${moves})`;
         }
 
         els.hint.textContent = "この端末だけで交互に遊べます";
@@ -786,7 +785,7 @@
       if (isWorldMode() && !state.currentRoom) {
         els.roomInfo.textContent = state.worldWaiting ? "マッチング中" : "まだ開始していません";
         els.status.textContent = state.worldWaiting ? "誰かを待ってるよ" : "マッチング開始を押してね";
-        els.playersInfo.textContent = "p1: - / p2: -";
+        els.playersInfo.textContent = `p1: ${names.p1} / p2: ${names.p2}`;
         els.speedInfo.textContent = "落下速度: -";
         els.hint.textContent = "マッチングが始まるまでは設定を変えられるよ";
         updateRematchPanel();
@@ -798,7 +797,7 @@
       if (isFriendMode() && !state.friendConnected) {
         els.roomInfo.textContent = "まだ部屋に入っていません";
         els.status.textContent = "部屋コードを入れて参加 / 作成を押してね";
-        els.playersInfo.textContent = "p1: - / p2: -";
+        els.playersInfo.textContent = `p1: ${names.p1} / p2: ${names.p2}`;
         els.speedInfo.textContent = "落下速度: -";
         els.hint.textContent = "同じ部屋コードを2人で入れると対戦できます";
         setSettingsInputsEnabled(true);
@@ -807,7 +806,6 @@
       }
 
       els.roomInfo.textContent = state.roomId ? `部屋: ${state.roomId}` : "部屋に接続中";
-      const names = getPlayerNames(state.currentRoom);
       els.playersInfo.textContent = `p1: ${names.p1} / p2: ${names.p2}`;
 
       if (!state.currentRoom) {
@@ -834,8 +832,7 @@
         els.status.textContent = `${turnIcon}の番です${state.mySlot ? ` / あなたは ${myIcon}` : ""}`;
       }
 
-      const drops = countPlacedCells(state.currentRoom.board);
-      els.speedInfo.textContent = `現在の落下速度: 1/${5 + drops} 秒 (n=${drops})`;
+      els.speedInfo.textContent = `現在の落下速度: 1/${5 + moves} 秒 (n=${moves})`;
 
       if (isWorldMode() && state.currentRoom.gameOver) updateRematchPanel();
       else els.rematchPanel.classList.add("hidden");
@@ -1077,19 +1074,16 @@
           return;
         }
 
-        const hasBoth = !!(players.p1 && players.p2);
-        const shouldStart = hasBoth && room.status !== "playing";
-
         const next = {
           settings: room.settings || settings,
-          board: shouldStart ? boardToStorage(makeEmptyBoard(settings.rows, settings.cols)) : (room.board || boardToStorage(makeEmptyBoard(settings.rows, settings.cols))),
-          currentPlayer: shouldStart ? (Math.random() < 0.5 ? "p1" : "p2") : (room.currentPlayer || null),
-          status: shouldStart ? "playing" : (room.status === "playing" ? "playing" : "waiting"),
-          totalDrops: shouldStart ? 0 : (Number.isFinite(room.totalDrops) ? room.totalDrops : 0),
-          gameOver: shouldStart ? false : !!room.gameOver,
-          winner: shouldStart ? null : (room.winner || null),
-          lastMove: shouldStart ? null : (room.lastMove || null),
-          winCells: shouldStart ? null : (Array.isArray(room.winCells) ? room.winCells : null),
+          board: boardToStorage(room.board || makeEmptyBoard(settings.rows, settings.cols)),
+          currentPlayer: room.currentPlayer || null,
+          status: room.status === "playing" ? "playing" : "waiting",
+          totalDrops: Number.isFinite(room.totalDrops) ? room.totalDrops : 0,
+          gameOver: !!room.gameOver,
+          winner: room.winner || null,
+          lastMove: room.lastMove || null,
+          winCells: Array.isArray(room.winCells) ? room.winCells : null,
           players,
           mode: "friend",
           hostId: room.hostId || myId
@@ -1345,7 +1339,7 @@
       const nextBoard = cloneBoard(state.currentRoom.board);
       nextBoard[targetRow][col] = player;
 
-      const nextDrops = countPlacedCells(nextBoard);
+      const nextDrops = (state.currentRoom.totalDrops || 0) + 1;
       const moveId = `${Date.now()}-${Math.random().toString(36).slice(2, 7)}`;
 
       const nextState = {
@@ -1422,7 +1416,7 @@
 
           nextBoard[placeRow][col] = state.mySlot;
 
-          const nextDrops = countPlacedCells(nextBoard);
+          const nextDrops = (room.totalDrops || 0) + 1;
           const nextState = {
             ...room,
             board: boardToStorage(nextBoard),
@@ -1453,7 +1447,7 @@
         const optimistic = cloneBoard(state.currentRoom.board);
         optimistic[targetRow][col] = state.mySlot;
 
-        const nextDrops = countPlacedCells(optimistic);
+        const nextDrops = (state.currentRoom.totalDrops || 0) + 1;
         const nextState = {
           ...state.currentRoom,
           board: optimistic,
@@ -1640,6 +1634,11 @@
       }
 
       if (isWorldMode()) {
+        if (state.currentRoom?.gameOver) {
+          updateModeUI();
+          return;
+        }
+
         if (state.worldWaiting && state.queueSnapshot?.status === "waiting" && state.queueSnapshot.uid === myId) {
           await update(state.queueRef, {
             uid: myId,
