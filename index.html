@@ -1001,34 +1001,29 @@
       updateButtons();
     }
 
-    async function startFriendIfReady(roomRef) {
+    async function startGameIfReady(roomRef) {
       await runTransaction(roomRef, current => {
         if (!current) return current;
         const room = normalizeRoom(current);
 
-        const p1 = room.players?.p1;
-        const p2 = room.players?.p2;
+        if (room.status === "playing") return current;
+        if (!(room.players?.p1 && room.players?.p2)) return current;
 
-        if (room.status !== "playing" && p1 && p2) {
-          const starter = Math.random() < 0.5 ? "p1" : "p2";
-          return {
-            ...current,
-            settings: room.settings,
-            board: boardToStorage(makeEmptyBoard(room.settings.rows, room.settings.cols)),
-            currentPlayer: starter,
-            status: "playing",
-            totalDrops: 0,
-            gameOver: false,
-            winner: null,
-            lastMove: null,
-            winCells: null,
-            players: room.players,
-            mode: "friend",
-            hostId: room.hostId
-          };
-        }
+        const starter = Math.random() < 0.5 ? "p1" : "p2";
 
-        return current;
+        return {
+          ...current,
+          settings: room.settings,
+          board: boardToStorage(makeEmptyBoard(room.settings.rows, room.settings.cols)),
+          currentPlayer: starter,
+          status: "playing",
+          totalDrops: 0,
+          gameOver: false,
+          winner: null,
+          lastMove: null,
+          winCells: null,
+          players: room.players
+        };
       });
     }
 
@@ -1048,43 +1043,33 @@
         if (players.p1?.updatedAt && now - players.p1.updatedAt > 120000) delete players.p1;
         if (players.p2?.updatedAt && now - players.p2.updatedAt > 120000) delete players.p2;
 
-        let mySlot = null;
-
         if (players.p1?.id === myId) {
           players.p1 = { ...players.p1, name: state.displayName, updatedAt: now };
-          mySlot = "p1";
         } else if (players.p2?.id === myId) {
           players.p2 = { ...players.p2, name: state.displayName, updatedAt: now };
-          mySlot = "p2";
         } else if (!players.p1) {
           players.p1 = { id: myId, name: state.displayName, updatedAt: now };
-          mySlot = "p1";
         } else if (!players.p2) {
           players.p2 = { id: myId, name: state.displayName, updatedAt: now };
-          mySlot = "p2";
         } else {
           return;
         }
 
-        const hasBoth = !!(players.p1 && players.p2);
-        const shouldStart = hasBoth && room.status !== "playing";
-
         const next = {
           settings: room.settings || settings,
-          board: shouldStart ? boardToStorage(makeEmptyBoard(settings.rows, settings.cols)) : (room.board || boardToStorage(makeEmptyBoard(settings.rows, settings.cols))),
-          currentPlayer: shouldStart ? (Math.random() < 0.5 ? "p1" : "p2") : (room.currentPlayer || null),
-          status: shouldStart ? "playing" : (room.status === "playing" ? "playing" : "waiting"),
-          totalDrops: shouldStart ? 0 : (Number.isFinite(room.totalDrops) ? room.totalDrops : 0),
-          gameOver: shouldStart ? false : !!room.gameOver,
-          winner: shouldStart ? null : (room.winner || null),
-          lastMove: shouldStart ? null : (room.lastMove || null),
-          winCells: shouldStart ? null : (Array.isArray(room.winCells) ? room.winCells : null),
+          board: boardToStorage(room.board || makeEmptyBoard(settings.rows, settings.cols)),
+          currentPlayer: room.currentPlayer || null,
+          status: room.status === "playing" ? "playing" : "waiting",
+          totalDrops: Number.isFinite(room.totalDrops) ? room.totalDrops : 0,
+          gameOver: !!room.gameOver,
+          winner: room.winner || null,
+          lastMove: room.lastMove || null,
+          winCells: Array.isArray(room.winCells) ? room.winCells : null,
           players,
           mode: "friend",
           hostId: room.hostId || myId
         };
 
-        next.__mySlot = mySlot;
         return next;
       });
 
@@ -1112,7 +1097,7 @@
       localStorage.setItem(lastRoomKey, roomId);
 
       if (after.players?.p1 && after.players?.p2) {
-        await startFriendIfReady(state.roomRef);
+        await startGameIfReady(state.roomRef);
       }
 
       const snap = await get(state.roomRef);
@@ -1143,8 +1128,8 @@
         state.currentRoom = room;
         applySettingsToInputs(room.settings);
 
-        if (isFriendMode() && room.status !== "playing" && room.players?.p1 && room.players?.p2) {
-          startFriendIfReady(roomRef).catch(console.error);
+        if (room.status !== "playing" && room.players?.p1 && room.players?.p2) {
+          startGameIfReady(roomRef).catch(console.error);
         }
 
         const mv = room.lastMove;
@@ -1292,8 +1277,8 @@
         return {
           settings: chosenSettings,
           board: boardToStorage(makeEmptyBoard(chosenSettings.rows, chosenSettings.cols)),
-          currentPlayer: Math.random() < 0.5 ? "p1" : "p2",
-          status: "playing",
+          currentPlayer: null,
+          status: "waiting",
           totalDrops: 0,
           gameOver: false,
           winner: null,
@@ -1324,6 +1309,8 @@
         applySettingsToInputs(room.settings);
       }
 
+      await remove(state.queueRef).catch(() => {});
+      state.worldWaiting = false;
       return true;
     }
 
